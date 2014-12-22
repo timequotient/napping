@@ -136,7 +136,7 @@ func (s *Session) Send(r *Request) (response *Response, err error) {
 	if userinfo != nil {
 		pwd, _ := userinfo.Password()
 		req.SetBasicAuth(userinfo.Username(), pwd)
-		if u.Scheme != "https" && s.Log {
+		if u.Scheme != "https" {
 			log.Println("WARNING: Using HTTP Basic Auth in cleartext is insecure.")
 		}
 	}
@@ -153,10 +153,14 @@ func (s *Session) Send(r *Request) (response *Response, err error) {
 	}
 	r.timestamp = time.Now()
 	var client *http.Client
+
 	if s.Client != nil {
 		client = s.Client
 	} else {
-		client = &http.Client{}
+		log.Println("ERROR: Session.Client is nil")
+		// mlm GAE doesn't support http.Client
+		// client = &http.Client{}
+		// client = urlfetch.Client(s.Context)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -166,6 +170,7 @@ func (s *Session) Send(r *Request) (response *Response, err error) {
 	defer resp.Body.Close()
 	r.status = resp.StatusCode
 	r.response = resp
+
 	//
 	// Unmarshal
 	//
