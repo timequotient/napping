@@ -10,11 +10,6 @@ library.
 [![Drone Build Status](https://drone.io/github.com/jmcvetta/napping/status.png)](https://drone.io/github.com/jmcvetta/napping/latest)
 [![Travis Build Status](https://travis-ci.org/jmcvetta/napping.png)](https://travis-ci.org/jmcvetta/napping)
 [![Coverage Status](https://coveralls.io/repos/jmcvetta/restclient/badge.png)](https://coveralls.io/r/jmcvetta/napping)
-[![xrefs](https://sourcegraph.com/api/repos/github.com/jmcvetta/napping/badges/xrefs.png)](https://sourcegraph.com/github.com/jmcvetta/napping)
-[![funcs](https://sourcegraph.com/api/repos/github.com/jmcvetta/napping/badges/funcs.png)](https://sourcegraph.com/github.com/jmcvetta/napping)
-[![top func](https://sourcegraph.com/api/repos/github.com/jmcvetta/napping/badges/top-func.png)](https://sourcegraph.com/github.com/jmcvetta/napping)
-[![library users](https://sourcegraph.com/api/repos/github.com/jmcvetta/napping/badges/library-users.png)](https://sourcegraph.com/github.com/jmcvetta/napping)
-[![status](https://sourcegraph.com/api/repos/github.com/jmcvetta/napping/badges/status.png)](https://sourcegraph.com/github.com/jmcvetta/napping)
 
 Used by, and developed in conjunction with, [Neoism][].
 
@@ -36,10 +31,10 @@ go get github.com/jmcvetta/napping
 
 Napping is versioned using [`gopkg.in`](http://gopkg.in).  
 
-Current release is `v1`.
+Current release is `v3`.
 
 ```
-go get gopkg.in/jmcvetta/napping.v1
+go get gopkg.in/jmcvetta/napping.v3
 ```
 
 
@@ -60,7 +55,7 @@ the repo Issues.  The API is fairly stable but there may be additions and small
 changes from time to time.
 
 
-# Contributing
+## Contributing
 
 Contributions in the form of Pull Requests or Issues are gladly accepted.
 Before submitting a Pull Request, please ensure your code passes all tests, and
@@ -74,6 +69,11 @@ demonstrates the problem.
 ## License
 
 This is Free Software, released under the terms of the [GPL v3][].
+
+Please feel free to make a donation to the author, to support the development
+of this and other Free Software packages.
+
+[![Donate with PayPal](https://img.shields.io/badge/donate-paypal-blue.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=YEXKK27UL48F2)
 
 
 [Go]:           http://golang.org

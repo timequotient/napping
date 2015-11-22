@@ -12,7 +12,9 @@ requests (cookies, auth, proxies).
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -20,8 +22,6 @@ import (
 	"strings"
 	"time"
 )
-
-import ()
 
 type Session struct {
 	Client *http.Client
@@ -32,7 +32,7 @@ type Session struct {
 
 	// Optional defaults - can be overridden in a Request
 	Header *http.Header
-	Params *Params
+	Params *url.Values
 }
 
 // Send constructs and sends an HTTP request.
@@ -44,16 +44,24 @@ func (s *Session) Send(r *Request) (response *Response, err error) {
 	//
 	u, err := url.Parse(r.Url)
 	if err != nil {
-		log.Println("URL", r.Url)
-		log.Println(err)
+		s.log("URL", r.Url)
+		s.log(err)
 		return
 	}
 	//
 	// Default query parameters
 	//
-	p := Params{}
+	p := url.Values{}
 	if s.Params != nil {
 		for k, v := range *s.Params {
+			p[k] = v
+		}
+	}
+	//
+	// Parameters that were present in URL
+	//
+	if u.Query() != nil {
+		for k, v := range u.Query() {
 			p[k] = v
 		}
 	}
@@ -68,11 +76,11 @@ func (s *Session) Send(r *Request) (response *Response, err error) {
 	//
 	// Encode parameters
 	//
-	vals := u.Query()
-	for k, v := range p {
-		vals.Set(k, v)
-	}
-	u.RawQuery = vals.Encode()
+	u.RawQuery = p.Encode()
+	//
+	// Attach params to response
+	//
+	r.Params = &p
 	//
 	// Create a Request object; if populated, Data field is JSON encoded as
 	// request body
@@ -85,24 +93,41 @@ func (s *Session) Send(r *Request) (response *Response, err error) {
 		}
 	}
 	var req *http.Request
+	var buf *bytes.Buffer
 	if r.Payload != nil {
-		var b []byte
-		b, err = json.Marshal(&r.Payload)
+		if r.RawPayload {
+			var ok bool
+			// buf can be nil interface at this point
+			// so we'll do extra nil check
+			buf, ok = r.Payload.(*bytes.Buffer)
+			if !ok {
+				err = errors.New("Payload must be of type *bytes.Buffer if RawPayload is set to true")
+				return
+			}
+		} else {
+			var b []byte
+			b, err = json.Marshal(&r.Payload)
+			if err != nil {
+				s.log(err)
+				return
+			}
+			buf = bytes.NewBuffer(b)
+		}
+		if buf != nil {
+			req, err = http.NewRequest(r.Method, u.String(), buf)
+		} else {
+			req, err = http.NewRequest(r.Method, u.String(), nil)
+		}
 		if err != nil {
-			log.Println(err)
+			s.log(err)
 			return
 		}
-		buf := bytes.NewBuffer(b)
-		req, err = http.NewRequest(r.Method, u.String(), buf)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		header.Add("Content-Type", "application/json")
+		// Overwrite the content type to json since we're pushing the payload as json
+		header.Set("Content-Type", "application/json")
 	} else { // no data to encode
 		req, err = http.NewRequest(r.Method, u.String(), nil)
 		if err != nil {
-			log.Println(err)
+			s.log(err)
 			return
 		}
 
@@ -137,34 +162,38 @@ func (s *Session) Send(r *Request) (response *Response, err error) {
 		pwd, _ := userinfo.Password()
 		req.SetBasicAuth(userinfo.Username(), pwd)
 		if u.Scheme != "https" {
-			log.Println("WARNING: Using HTTP Basic Auth in cleartext is insecure.")
+			s.log("WARNING: Using HTTP Basic Auth in cleartext is insecure.")
 		}
 	}
 	//
 	// Execute the HTTP request
 	//
-	if s.Log {
-		log.Println("--------------------------------------------------------------------------------")
-		log.Println("REQUEST")
-		log.Println("--------------------------------------------------------------------------------")
-		prettyPrint(req)
-		log.Print("Payload: ")
-		prettyPrint(r.Payload)
+
+	// Debug log request
+	s.log("--------------------------------------------------------------------------------")
+	s.log("REQUEST")
+	s.log("--------------------------------------------------------------------------------")
+	s.log("Method:", req.Method)
+	s.log("URL:", req.URL)
+	s.log("Header:", req.Header)
+	s.log("Form:", req.Form)
+	s.log("Payload:")
+	if r.RawPayload && s.Log && buf != nil {
+		s.log(base64.StdEncoding.EncodeToString(buf.Bytes()))
+	} else {
+		s.log(pretty(r.Payload))
 	}
 	r.timestamp = time.Now()
 	var client *http.Client
-
 	if s.Client != nil {
 		client = s.Client
 	} else {
-		log.Println("ERROR: Session.Client is nil")
-		// mlm GAE doesn't support http.Client
-		// client = &http.Client{}
-		// client = urlfetch.Client(s.Context)
+		client = &http.Client{}
+		s.Client = client
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println(err)
+		s.log(err)
 		return
 	}
 	defer resp.Body.Close()
@@ -176,7 +205,7 @@ func (s *Session) Send(r *Request) (response *Response, err error) {
 	//
 	r.body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Println(err)
+		s.log(err)
 		return
 	}
 	if string(r.body) != "" {
@@ -187,33 +216,37 @@ func (s *Session) Send(r *Request) (response *Response, err error) {
 			json.Unmarshal(r.body, r.Error) // Should we ignore unmarshall error?
 		}
 	}
+	if r.CaptureResponseBody {
+		r.ResponseBody = bytes.NewBuffer(r.body)
+	}
 	rsp := Response(*r)
 	response = &rsp
-	if s.Log {
-		log.Println("--------------------------------------------------------------------------------")
-		log.Println("RESPONSE")
-		log.Println("--------------------------------------------------------------------------------")
-		log.Println("Status: ", response.status)
-		log.Println("Header:")
-		prettyPrint(response.HttpResponse().Header)
-		log.Println("Body:")
-		if response.body != nil {
-			raw := json.RawMessage{}
-			if json.Unmarshal(response.body, &raw) == nil {
-				prettyPrint(&raw)
-			} else {
-				prettyPrint(response.RawText())
-			}
-		} else {
-			log.Println("Empty response body")
-		}
 
+	// Debug log response
+	s.log("--------------------------------------------------------------------------------")
+	s.log("RESPONSE")
+	s.log("--------------------------------------------------------------------------------")
+	s.log("Status: ", response.status)
+	s.log("Header:")
+	s.log(pretty(response.HttpResponse().Header))
+	s.log("Body:")
+
+	if response.body != nil {
+		raw := json.RawMessage{}
+		if json.Unmarshal(response.body, &raw) == nil {
+			s.log(pretty(&raw))
+		} else {
+			s.log(pretty(response.RawText()))
+		}
+	} else {
+		s.log("Empty response body")
 	}
+
 	return
 }
 
 // Get sends a GET request.
-func (s *Session) Get(url string, p *Params, result, errMsg interface{}) (*Response, error) {
+func (s *Session) Get(url string, p *url.Values, result, errMsg interface{}) (*Response, error) {
 	r := Request{
 		Method: "GET",
 		Url:    url,
@@ -283,12 +316,22 @@ func (s *Session) Patch(url string, payload, result, errMsg interface{}) (*Respo
 }
 
 // Delete sends a DELETE request.
-func (s *Session) Delete(url string, result, errMsg interface{}) (*Response, error) {
+func (s *Session) Delete(url string, p *url.Values, result, errMsg interface{}) (*Response, error) {
 	r := Request{
 		Method: "DELETE",
 		Url:    url,
+		Params: p,
 		Result: result,
 		Error:  errMsg,
 	}
 	return s.Send(&r)
+}
+
+// Debug method for logging
+// Centralizing logging in one method
+// avoids spreading conditionals everywhere
+func (s *Session) log(args ...interface{}) {
+	if s.Log {
+		log.Println(args...)
+	}
 }

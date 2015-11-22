@@ -6,13 +6,15 @@
 package napping
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/bmizerany/assert"
+	"github.com/stretchr/testify/assert"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -67,7 +69,7 @@ func TestGet(t *testing.T) {
 	// Good request
 	//
 	url := "http://" + srv.Listener.Addr().String()
-	p := fooParams
+	p := fooParams.AsUrlValues()
 	res := structType{}
 	resp, err := Get(url, &p, &res, nil)
 	if err != nil {
@@ -79,7 +81,7 @@ func TestGet(t *testing.T) {
 	// Bad request
 	//
 	url = "http://" + srv.Listener.Addr().String()
-	p = Params{"bad": "value"}
+	p = Params{"bad": "value"}.AsUrlValues()
 	e := errorStruct{}
 	resp, err = Get(url, &p, nil, nil)
 	if err != nil {
@@ -105,7 +107,7 @@ func TestDefaultParams(t *testing.T) {
 	// Good request
 	//
 	url := "http://" + srv.Listener.Addr().String()
-	p := fooParams
+	p := fooParams.AsUrlValues()
 	res := structType{}
 	s := Session{
 		Params: &p,
@@ -120,7 +122,7 @@ func TestDefaultParams(t *testing.T) {
 	// Bad request
 	//
 	url = "http://" + srv.Listener.Addr().String()
-	p = Params{"bad": "value"}
+	p = Params{"bad": "value"}.AsUrlValues()
 	e := errorStruct{}
 	resp, err = Get(url, &p, nil, nil)
 	if err != nil {
@@ -142,7 +144,7 @@ func TestDelete(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(HandleDelete))
 	defer srv.Close()
 	url := "http://" + srv.Listener.Addr().String()
-	resp, err := Delete(url, nil, nil)
+	resp, err := Delete(url, nil, nil, nil)
 	if err != nil {
 		t.Error(err)
 	}
@@ -206,6 +208,24 @@ func TestPostUnmarshallable(t *testing.T) {
 	}
 }
 
+func TestPostParamsInUrl(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(HandlePost))
+	defer srv.Close()
+	s := Session{}
+	s.Log = true
+	u := "http://" + srv.Listener.Addr().String()
+	u += "?spam=eggs" // Add query params to URL
+	payload := fooStruct
+	res := structType{}
+	resp, err := s.Post(u, &payload, &res, nil)
+	if err != nil {
+		t.Error(err)
+	}
+	expected := &url.Values{}
+	expected.Add("spam", "eggs")
+	assert.Equal(t, expected, resp.Params)
+}
+
 func TestPut(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(HandlePut))
 	defer srv.Close()
@@ -232,6 +252,104 @@ func TestPatch(t *testing.T) {
 	assert.Equal(t, resp.Status(), 200)
 	// Server should return NO data
 	assert.Equal(t, resp.RawText(), "")
+}
+
+func TestRawRequestWithData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(HandleRaw))
+	defer srv.Close()
+
+	var payload = bytes.NewBufferString("napping")
+	res := structType{}
+	req := Request{
+		Url:        "http://" + srv.Listener.Addr().String(),
+		Method:     "PUT",
+		RawPayload: true,
+		Payload:    payload,
+		Result:     &res,
+	}
+
+	resp, err := Send(&req)
+	if err != nil {
+		t.Error(err)
+	}
+
+	assert.Equal(t, resp.Status(), 200)
+	assert.Equal(t, res.Bar, "napping")
+}
+
+func TestRawRequestWithoutData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(HandleRaw))
+	defer srv.Close()
+
+	var payload *bytes.Buffer = nil
+	res := structType{}
+	req := Request{
+		Url:        "http://" + srv.Listener.Addr().String(),
+		Method:     "PUT",
+		RawPayload: true,
+		Payload:    payload,
+		Result:     &res,
+	}
+
+	resp, err := Send(&req)
+	if err != nil {
+		t.Error(err)
+	}
+
+	assert.Equal(t, resp.Status(), 200)
+	assert.Equal(t, res.Bar, "empty")
+}
+
+func TestRawRequestInvalidType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(HandleRaw))
+	defer srv.Close()
+
+	payload := structType{}
+	res := structType{}
+	req := Request{
+		Url:        "http://" + srv.Listener.Addr().String(),
+		Method:     "PUT",
+		RawPayload: true,
+		Payload:    payload,
+		Result:     &res,
+	}
+
+	_, err := Send(&req)
+
+	if err == nil {
+		t.Error("Validation error expected")
+	} else {
+		assert.Equal(t, err.Error(), "Payload must be of type *bytes.Buffer if RawPayload is set to true")
+	}
+}
+
+// TestRawResponse tests capturing the raw response body.
+func TestRawResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(HandleRaw))
+	defer srv.Close()
+
+	var payload = bytes.NewBufferString("napping")
+	req := Request{
+		Url:                 "http://" + srv.Listener.Addr().String(),
+		Method:              "PUT",
+		RawPayload:          true,
+		CaptureResponseBody: true,
+		Payload:             payload,
+	}
+
+	resp, err := Send(&req)
+	if err != nil {
+		t.Error(err)
+	}
+
+	assert.Equal(t, resp.Status(), 200)
+	rawResponseStruct := structType{
+		Foo: 0,
+		Bar: "napping",
+	}
+
+	blob, err := json.Marshal(rawResponseStruct)
+	assert.Equal(t, bytes.Equal(resp.ResponseBody.Bytes(), blob), true)
 }
 
 func JsonError(w http.ResponseWriter, msg string, code int) {
@@ -410,5 +528,37 @@ func HandlePatch(w http.ResponseWriter, req *http.Request) {
 		JsonError(w, msg, http.StatusBadRequest)
 		return
 	}
+	return
+}
+
+func HandleRaw(w http.ResponseWriter, req *http.Request) {
+	var err error
+	var result = structType{}
+	if req.ContentLength <= 0 {
+		result.Bar = "empty"
+	} else {
+		var body []byte
+		body, err = ioutil.ReadAll(req.Body)
+		if err == nil {
+			result.Bar = string(body)
+		}
+	}
+
+	if err != nil {
+		JsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var blob []byte
+	blob, err = json.Marshal(result)
+
+	if err != nil {
+		JsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Add("content-type", "application/json")
+	w.Write(blob)
+
 	return
 }
